@@ -1,0 +1,176 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from itertools import combinations
+from statsmodels.formula.api import ols
+import statsmodels.api as sm
+from statsmodels.stats.multitest import multipletests
+from scipy import stats
+
+# === Load data ===
+file_path = r"C:\Users\OMISTAJA\Downloads\LBN TRAP2 results(SPSS).csv"
+df = pd.read_csv(file_path, sep=";")
+df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+df["region"] = df["region"].str.strip()
+df["react"] = pd.to_numeric(df["react"], errors="coerce")
+
+# === Aggregate per animal, group, sex, region ===
+df_react_avg = df.groupby(["id", "group", "sex", "region"], as_index=False)["react"].mean()
+
+# === Define group order ===
+group_order = ["CTRL-homecage", "CTRL-OF", "LBN-homecage", "LBN-OF"]
+df_react_avg["group"] = pd.Categorical(df_react_avg["group"], categories=group_order, ordered=True)
+
+# === Base height scaling per region ===
+region_base_y_scale = {
+    "BLA": 0.12,   # slightly higher brackets
+    "LA": 0.08,
+    "Whole": 0.08
+}
+
+# === Function to add adaptive significance brackets avoiding all points ===
+def add_significance_brackets_no_collision(ax, comparisons, group_order, subdf,
+                                           sex_hue_offset=0.2, base_y_scale=0.08, padding=0.02):
+"""
+    Automatic significance brackets:
+    - adaptive stacking
+    - male/female offset
+    - avoids collisions with all individual points
+    """
+    y_min, y_max = ax.get_ylim()
+    y_range = y_max - y_min
+    used_y = []
+
+    for g1, g2, p_corr, sig, sex in comparisons:
+        if not sig:
+            continue
+
+        # Determine stars
+        if p_corr < 0.001:
+            stars = "***"
+        elif p_corr < 0.01:
+            stars = "**"
+        else:
+            stars = "*"
+
+        # X positions
+        x1 = group_order.index(g1)
+        x2 = group_order.index(g2)
+        offset = sex_hue_offset if sex == "female" else -sex_hue_offset
+        x1 += offset
+        x2 += offset
+
+        # Maximum among all points in the bracket span
+        y_max_span = subdf[subdf["group"].isin([g1, g2])]["react"].max()
+        y_sig = y_max_span + padding * y_range
+
+        # Raise bracket higher if group distance is large
+        group_distance = abs(group_order.index(g2) - group_order.index(g1))
+        y_sig += base_y_scale * y_range * (1 + 0.3 * (group_distance - 1))
+ # Adaptive stacking to avoid collision with previous brackets
+        while any(abs(y_sig - uy) < base_y_scale * y_range for uy in used_y):
+            y_sig += base_y_scale * y_range
+        used_y.append(y_sig)
+
+        # Draw bracket
+        ax.plot([x1, x1, x2, x2],
+                [y_sig - 0.01*y_range, y_sig, y_sig, y_sig - 0.01*y_range],
+                lw=1.5, color="black")
+        ax.text((x1 + x2)/2, y_sig + 0.01*y_range, stars, ha='center', va='bottom', fontsize=14)
+
+# === Plotting ===
+sns.set(style="whitegrid")
+regions = df_react_avg["region"].unique()
+fig, axes = plt.subplots(1, len(regions), figsize=(15, 5), sharey=True)
+
+for i, region in enumerate(regions):
+    ax = axes[i]
+    subdf = df_react_avg[df_react_avg["region"] == region].copy()
+
+    # Barplot
+    sns.barplot(
+        data=subdf,
+        x="group", y="react",
+        hue="sex",
+        order=group_order,
+        estimator=np.mean,
+        errorbar="se",
+        capsize=0.1,
+        palette="Set2",
+        ax=ax
+    )
+
+    # Overlay points
+    sns.stripplot(
+        data=subdf,
+        x="group", y="react",
+hue="sex",
+        order=group_order,
+        dodge=True, jitter=True,
+        marker="o", size=5,
+        palette="Set2",
+        ax=ax,
+        linewidth=0.5, edgecolor="black"
+    )
+
+    # Remove duplicate legend
+    ax.get_legend().remove()
+    ax.set_title(region)
+    ax.set_ylabel("Reactivation" if i == 0 else "")
+    ax.set_xlabel("")
+    ax.tick_params(axis="x", rotation=45)
+
+    # === Two-way ANOVA ===
+    model = ols("react ~ C(group) * C(sex)", data=subdf).fit()
+    anova_table = sm.stats.anova_lm(model, typ=2)
+    print(f"\n=== Two-way ANOVA for region: {region} ===")
+    print(anova_table)
+
+    # === Post hoc Sidak per sex ===
+    comparisons_all = []
+    for sex in subdf["sex"].unique():
+        sex_df = subdf[subdf["sex"] == sex]
+
+        # Only include groups with data
+        available_groups = sex_df["group"].unique()
+        pairs = [p for p in combinations(group_order, 2)
+                 if p[0] in available_groups and p[1] in available_groups]
+
+        # Compute t-tests for valid pairs
+        pvals = []
+        for g1, g2 in pairs:
+            d1 = sex_df[sex_df["group"] == g1]["react"]
+            d2 = sex_df[sex_df["group"] == g2]["react"]
+            _, p = stats.ttest_ind(d1, d2, nan_policy="omit")
+            pvals.append(p)
+
+        # Sidak correction
+        reject, pvals_corr, _, _ = multipletests(pvals, alpha=0.05, method="sidak")
+        comparisons = [(g1, g2, p_corr, sig, sex) for (g1, g2), p_corr, sig in zip(pairs, pvals_corr, reject)]
+        comparisons_all.extend(comparisons)
+
+        # Print post hoc table
+        print(f"\nPost-hoc Sidak-corrected comparisons for region {region}, sex: {sex}")
+        for g1, g2, p_corr, sig, _ in comparisons:
+            if p_corr < 0.001:
+                stars = "***"
+            elif p_corr < 0.01:
+                stars = "**"
+            elif p_corr < 0.05:
+                stars = "*"
+            else:
+                stars = "ns"
+            print(f"{g1} vs {g2}: p={p_corr:.4f} ({stars})")
+
+    # Add adaptive significance brackets avoiding all points
+    base_y = region_base_y_scale.get(region, 0.08)
+    add_significance_brackets_no_collision(ax, comparisons_all, group_order, subdf,
+                                           base_y_scale=base_y)
+
+# Global legend
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles[:2], labels[:2], loc="upper right")  # only one handle per sex
+plt.tight_layout()
+plt.savefig(r"C:\Users\OMISTAJA\Desktop\Gradu_images\reactivation_comparison.png", dpi=300)
+plt.show()
