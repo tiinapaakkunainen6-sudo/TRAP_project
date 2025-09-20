@@ -1,0 +1,76 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+
+# Data
+CTRL = np.array([0.4400, 0.3700, 0.3711, 0.4450, 0.4000, 0.4275, 0.4113, 0.4725, 0.3000])
+LBN = np.array([0.2175, 0.4040, 0.3138, 0.3700, 0.3675, 0.2857, 0.2343])
+
+# Means and SEMs
+means = [np.mean(CTRL), np.mean(LBN)]
+sems = [stats.sem(CTRL), stats.sem(LBN)]
+
+# Welch's t-test
+t_stat, pval = stats.ttest_ind(LBN, CTRL, equal_var=False)
+
+# Degrees of freedom for Welch's t-test
+n1, n2 = len(LBN), len(CTRL)
+s1, s2 = np.var(LBN, ddof=1), np.var(CTRL, ddof=1)
+df = (s1/n1 + s2/n2)**2 / ((s1/n1)**2/(n1-1) + (s2/n2)**2/(n2-1))
+
+# Bar parameters
+bar_width = 0.2       # thinner bars
+space_between = 0.1   # space between bars
+side_gap = 0.1        # space before first and after last
+
+# Bar centers
+x = [side_gap + bar_width/2, side_gap + bar_width/2 + bar_width + space_between]
+
+# Plot
+fig, ax = plt.subplots(figsize=(4,6))
+
+# Bars with error bars (thicker SEM lines)
+ax.bar(x, means, yerr=sems, width=bar_width, color='white', edgecolor='black',
+       linewidth=3, capsize=6, error_kw={'elinewidth':2.5, 'ecolor':'black'})
+
+# Scatter points with jitter
+rng = np.random.default_rng()
+jitter = 0.02
+offset = 0.02
+ax.scatter(x[0] - offset + rng.uniform(-jitter, jitter, len(CTRL)), CTRL,
+           color='black', edgecolor='k', s=60, zorder=3)
+ax.scatter(x[1] + offset + rng.uniform(-jitter, jitter, len(LBN)), LBN,
+           color='lightgray', edgecolor='k', s=60, zorder=3)
+
+y_max = max(max(CTRL), max(LBN))
+y_sig = y_max + 0.05
+ax.plot([x[0], x[0], x[1], x[1]], [y_sig-0.01, y_sig, y_sig, y_sig-0.01],
+        color='black', lw=2.5)
+if pval < 0.05:
+    ax.text(np.mean(x), y_sig + 0.01, '*', ha='center', va='bottom', fontsize=24, fontweight='bold')
+
+# Labels
+ax.set_xticks(x)
+ax.set_xticklabels(['control', 'ELS'], fontsize=16, fontweight='bold')
+ax.set_ylabel('g/day', fontsize=16, fontweight='bold')
+
+# Axis 
+ax.tick_params(labelsize=14, width=2)  # width makes tick lines thicker
+for tick in ax.get_xticklabels() + ax.get_yticklabels():
+    tick.set_fontweight('bold')
+    
+ax.spines['bottom'].set_linewidth(2)  
+ax.spines['left'].set_linewidth(2)    
+
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+
+ax.set_xlim(0, x[1] + bar_width/2 + side_gap)
+
+# Save figure
+plt.tight_layout()
+plt.savefig(r"C:\Users\OMISTAJA\Desktop\Gradu_images\TRAP_weights.png", dpi=300)
+plt.show()
+
+# Print t, df, and p-value
+print(f"Welch's t-test: t = {t_stat:.3f}, df = {df:.2f}, p = {pval:.5f}")
