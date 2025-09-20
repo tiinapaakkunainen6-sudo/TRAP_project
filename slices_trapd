@@ -1,0 +1,57 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+# === Load real data ===
+file_path = r"C:\Users\OMISTAJA\Downloads\LBN TRAP2 results(SPSS).csv"
+
+df = pd.read_csv(file_path, sep=";")
+df = df.loc[:, ~df.columns.str.contains("^Unnamed")]  # drop empty columns
+
+# === Plotting ===
+sns.set(style="whitegrid")
+
+regions = df["region"].unique()
+fig, axes = plt.subplots(1, len(regions), figsize=(15, 5), sharey=True)
+
+for i, region in enumerate(regions):
+    ax = axes[i]
+    subdf = df[df["region"] == region]
+
+    # Barplot with SEM
+    sns.barplot(
+        data=subdf,
+        x="group", y="trapd", hue="sex",
+        estimator=np.mean,
+        errorbar="se",
+        capsize=0.1,
+        err_kws={"color": "black"},
+        palette="Set2", ax=ax,
+        zorder=1
+    )
+# Overlay datapoints
+    sns.stripplot(
+        data=subdf,
+        x="group", y="trapd", hue="sex",
+        dodge=True, jitter=True,
+        marker="o", size=5,
+        palette="Set2", ax=ax,
+        linewidth=0.5, edgecolor="black",
+        zorder=2
+    )
+
+    ax.set_title(region)
+    ax.set_ylabel("TRAP density" if i == 0 else "")
+    ax.set_xlabel("")
+    ax.tick_params(axis="x", rotation=45)
+
+    # Remove duplicate legends
+    ax.get_legend().remove()
+
+# One global legend
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="upper right")
+
+plt.tight_layout()
+plt.show()
