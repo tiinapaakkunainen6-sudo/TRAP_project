@@ -1,0 +1,98 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+
+# === Load data ===
+file_path = r"C:\Users\OMISTAJA\Downloads\LBN TRAP2 results(SPSS).csv"
+df = pd.read_csv(file_path, sep=";")
+df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+df["region"] = df["region"].str.strip()
+df["trapd"] = pd.to_numeric(df["trapd"], errors="coerce")
+
+# === Aggregate per animal, group, sex, region ===
+df_avg = df.groupby(["id", "group", "sex", "region"], as_index=False)["trapd"].mean()
+
+# === Define group order ===
+group_order = ["CTRL-homecage", "CTRL-OF", "LBN-homecage", "LBN-OF"]
+df_avg["group"] = pd.Categorical(df_avg["group"], categories=group_order, ordered=True)
+
+# === Plotting function for sex differences only with individual points ===
+def plot_sex_diff_trapd(df_plot, value_col="trapd"):
+    sns.set(style="whitegrid")
+    regions = df_plot["region"].unique()
+    fig, axes = plt.subplots(1, len(regions), figsize=(15, 5), sharey=True)
+
+    base_y_scale = 0.05
+    padding = 0.01
+
+    for i, region in enumerate(regions):
+        ax = axes[i]
+        subdf = df_plot[df_plot["region"] == region].copy()
+# Barplot
+        sns.barplot(
+            data=subdf,
+            x="group", y=value_col,
+            hue="sex",
+            order=group_order,
+            estimator=np.mean,
+            errorbar="se",
+            capsize=0.1,
+            palette="Set2",
+            ax=ax
+        )
+
+        # Overlay points
+        sns.stripplot(
+            data=subdf,
+            x="group", y=value_col,
+            hue="sex",
+            order=group_order,
+            dodge=True, jitter=True,
+            marker="o", size=5,
+            palette="Set2",
+            ax=ax,
+            linewidth=0.5, edgecolor="black"
+        )
+
+        ax.set_title(region)
+        ax.set_ylabel("Trap density" if i == 0 else "")
+        ax.set_xlabel("")
+        ax.tick_params(axis="x", rotation=45)
+        ax.get_legend().remove()
+
+        # --- Compute sex differences within each group ---
+        used_y = []
+        for grp in group_order:
+            grp_df = subdf[subdf["group"] == grp]
+            if len(grp_df["sex"].unique()) < 2:
+                continue
+ male_vals = grp_df[grp_df["sex"] == "male"][value_col]
+            female_vals = grp_df[grp_df["sex"] == "female"][value_col]
+            t_stat, p_val = stats.ttest_ind(male_vals, female_vals, nan_policy="omit")
+            sig = p_val < 0.05
+            stars = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*" if p_val < 0.05 else "ns"
+            print(f"Sex difference for region {region}, group {grp}: p={p_val:.4f} ({stars})")
+
+            if sig:
+                # Draw bracket between male and female bars
+                x1 = group_order.index(grp) - 0.2
+                x2 = group_order.index(grp) + 0.2
+                y_max = max(male_vals.max(), female_vals.max())
+                y_sig = y_max + padding
+                while any(abs(y_sig - uy) < base_y_scale for uy in used_y):
+                    y_sig += base_y_scale
+                used_y.append(y_sig)
+                ax.plot([x1, x1, x2, x2], [y_sig-0.005, y_sig, y_sig, y_sig-0.005], lw=1.5, color='black')
+                ax.text((x1+x2)/2, y_sig+0.005, stars, ha='center', va='bottom', fontsize=14)
+
+    # Global legend (one handle per sex)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles[:2], labels[:2], loc="upper right")
+    plt.tight_layout()
+    plt.savefig(r"C:\Users\OMISTAJA\Desktop\Gradu_images\trapd_sexcomp.png", dpi=300)
+    plt.show()
+
+# === Call the function ===
+plot_sex_diff_trapd(df_avg, value_col="trapd")
